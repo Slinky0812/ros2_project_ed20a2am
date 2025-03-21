@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'lab5'
+package_name = 'ros2_project_ed20a2am'
 
 setup(
     name=package_name,
@@ -20,10 +20,12 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'first_step = lab5.first_step:main',
-            'second_step = lab5.second_step:main',
-            'third_step = lab5.third_step:main',
-            'fourth_step = lab5.fourth_step:main',
+            'first_step = ros2_project_ed20a2am.first_step:main',
+            'second_step = ros2_project_ed20a2am.second_step:main',
+            'third_step = ros2_project_ed20a2am.third_step:main',
+            'fourth_step = ros2_project_ed20a2am.fourth_step:main',
+            'firstwalk = ros2_project_ed20a2am.firstwalk:main',
+            'project = ros2_project_ed20a2am.project:main'
         ],
     },
 )
