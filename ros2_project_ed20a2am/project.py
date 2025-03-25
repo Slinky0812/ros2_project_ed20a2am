@@ -62,6 +62,18 @@ class Robot(Node):
             hsv_blue_lower = np.array([120 - self.sensitivity, 100, 100])
             hsv_blue_upper = np.array([120 + self.sensitivity, 255, 255])
 
+            # green bounds
+            hsv_green_lower = np.array([60 - self.sensitivity, 100, 100])
+            hsv_green_upper = np.array([60 + self.sensitivity, 255, 255])
+
+            # red lower bounds
+            hsv_red_lower_1 = np.array([0 - self.sensitivity, 100, 100])
+            hsv_red_upper_1 = np.array([0 + self.sensitivity, 255, 255])
+
+            # red upper bounds
+            hsv_red_lower_2 = np.array([180 - self.sensitivity, 100, 100])
+            hsv_red_upper_2 = np.array([180 + self.sensitivity, 255, 255])
+
             # Convert the rgb image into a hsv image
             hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
@@ -69,8 +81,20 @@ class Robot(Node):
 
             blue_mask = cv2.inRange(hsv_image, hsv_blue_lower, hsv_blue_upper)
 
+            green_mask = cv2.inRange(hsv_image, hsv_green_lower, hsv_green_upper)
+
+            red_mask_1 = cv2.inRange(hsv_image, hsv_red_lower_1, hsv_red_upper_1)
+
+            red_mask_2 = cv2.inRange(hsv_image, hsv_red_lower_2, hsv_red_upper_2)
+
+            red_mask = cv2.bitwise_or(red_mask_1, red_mask_2)
+
+            gb_mask = cv2.bitwise_or(green_mask, blue_mask)
+
+            rgb_mask = cv2.bitwise_or(red_mask, gb_mask)
+
             # Apply the mask to the original image using the cv2.bitwise_and() method
-            filtered_img = cv2.bitwise_and(image, image, mask=blue_mask)
+            filtered_img = cv2.bitwise_and(image, image, mask=rgb_mask)
 
             # Find the contours that appear within the certain colour mask using the cv2.findContours() method
             contours, _ = cv2.findContours(blue_mask, mode=cv2.RETR_LIST, method=cv2.CHAIN_APPROX_SIMPLE)
@@ -97,16 +121,18 @@ class Robot(Node):
                     cx = int(M['m10'] / M['m00'])
                     cy = int(M['m01'] / M['m00'])
 
+                    x, y, w, h = cv2.boundingRect(c)  # Get bounding rectangle
+                    cv2.rectangle(image, (x, y), (x + w, y + h), (255, 0, 0), 2)  # Draw blue rectangle with thickness 2
+
+                    # Cancel current navigation goal
                     if self.navigation_mode:
-                        print("here")
-                        # Cancel current navigation goal
-                        if self.current_goal_handle and self.current_goal_handle.status == 1:
+                        if self.current_goal_handle and self.current_goal_handle.status == 2:
+                            print(f"Goal handle exists. Status: {self.current_goal_handle.status}")
+                            self.get_logger().info('Found blue object')
                             future = self.current_goal_handle.cancel_goal_async()
                             future.add_done_callback(self.cancel_done_callback)
-                            self.current_goal_handle = None  # Reset after canceling
+                            self.get_logger().info('Reset')
                             time.sleep(1)
-
-                    self.navigation_mode = False
 
                     # Too close to object, need to move backwards
                     if cv2.contourArea(c) > 232000:
@@ -147,6 +173,37 @@ class Robot(Node):
                         self.turnRightFlag = False
                         self.turnLeftFlag = False
 
+
+            # Find the contours that appear within the certain colour mask using the cv2.findContours() method
+            contours, _ = cv2.findContours(green_mask, mode=cv2.RETR_LIST, method=cv2.CHAIN_APPROX_SIMPLE)
+
+            if len(contours) > 0:
+                c = max(contours, key=cv2.contourArea)
+
+                M = cv2.moments(c)
+
+                if M['m00'] > 0 and cv2.contourArea(c) > 100:
+                    cx, cy = int(M['m10']/M['m00']), int(M['m01']/M['m00'])
+
+                    x, y, w, h = cv2.boundingRect(c)  # Get bounding rectangle
+                    cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)  # Draw green rectangle with thickness 2
+
+
+            # Find the contours that appear within the certain colour mask using the cv2.findContours() method
+            contours, _ = cv2.findContours(red_mask, mode=cv2.RETR_LIST, method=cv2.CHAIN_APPROX_SIMPLE)
+
+            if len(contours) > 0:
+                c = max(contours, key=cv2.contourArea)
+
+                M = cv2.moments(c)
+
+                if M['m00'] > 0 and cv2.contourArea(c) > 100:
+                    cx, cy = int(M['m10']/M['m00']), int(M['m01']/M['m00'])
+
+                    x, y, w, h = cv2.boundingRect(c)  # Get bounding rectangle
+                    cv2.rectangle(image, (x, y), (x + w, y + h), (0, 0, 255), 2)  # Draw red rectangle with thickness 2
+
+
             # Show the resultant images created
             cv2.namedWindow('camera_Feed',cv2.WINDOW_NORMAL)
             cv2.imshow('camera_Feed', image)
@@ -159,7 +216,7 @@ class Robot(Node):
         return
 
 
-    def cancel_done_callback(self, future):
+    def cancel_done_callback(self, future):        
         # Cancel current goal
         cancel_response = future.result()
         if len(cancel_response.goals_canceling) > 0:
@@ -263,6 +320,7 @@ class Robot(Node):
         desired_velocity.linear.x = 0.0  # Send zero velocity to stop the robot
         desired_velocity.angular.z = 0.0
         self.publisher.publish(desired_velocity)
+        self.get_logger().info('Perfect distance from blue box - Stopped moving')
 
 
 def main():
@@ -282,8 +340,8 @@ def main():
     # list of goals
     goals = [
         (5.19, 4.03, 0.00),
-        (-4.61, 0.153, 0.15),
-        (6.7, -5.22, 0.00),
+        (-4.61, 0.153, 3.14),
+        (6.7, -5.22, 4.50),
         (-0.419, -10.1, 2.50)
     ]
 
