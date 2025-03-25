@@ -20,6 +20,7 @@ class Robot(Node):
         super().__init__('robot')
         self.action_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
         self.current_goal_handle = None  # Track active goal
+        self.goals_completed = 0
         
         # Initialise a publisher to publish messages to the robot base
         self.publisher = self.create_publisher(Twist, '/cmd_vel', 10)
@@ -91,12 +92,10 @@ class Robot(Node):
                 # Moments can calculate the center of the contour
                 M = cv2.moments(c)
 
-                if M['m00'] > 0 and cv2.contourArea(c) > 30:  # Avoid division by zero
+                # Check if the area of the shape you want is big enough to be considered
+                if M['m00'] > 0 and cv2.contourArea(c) > 10000:  # Avoid division by zero
                     cx = int(M['m10'] / M['m00'])
                     cy = int(M['m01'] / M['m00'])
-
-                    # Check if the area of the shape you want is big enough to be considered
-                    # if cv2.contourArea(c) > 30:
 
                     if self.navigation_mode:
                         print("here")
@@ -108,28 +107,21 @@ class Robot(Node):
                             time.sleep(1)
 
                     self.navigation_mode = False
-                        # # Alter the value of the flag
-                        # self.blue_found = True
 
-                    # # Check if blue has been found
-                    # if self.blue_found:
-                        # Too close to object, need to move backwards
+                    # Too close to object, need to move backwards
                     if cv2.contourArea(c) > 232000:
-                        print("too close")
                         # Set a flag to tell the robot to move backwards when in the main loop
                         self.moveBackwardsFlag = True
                         self.moveForwardsFlag = False
                         self.stopFlag = False
                     # Too far away from object, need to move forwards
                     elif cv2.contourArea(c) < 222000:
-                        print("too far")
                         # Set a flag to tell the robot to move forwards when in the main loop
                         self.moveForwardsFlag = True
                         self.moveBackwardsFlag = False
                         self.stopFlag = False
                     # Perfect distance, don't move
                     else:
-                        print("perfect??")
                         # Set a flag to tell the robot to stop moving when in the main loop
                         self.stopFlag = True
                         self.moveForwardsFlag = False
@@ -139,25 +131,21 @@ class Robot(Node):
             
                     # Direction check
                     margin = 50  # Tolerance for centering
+                    # Too much to the right, need to turn left
                     if cx < image_center_x - margin:
-                        print("Turning left")
+                        # Set a flag to tell the robot to turn left when in the main loop
                         self.turnLeftFlag = True
                         self.turnRightFlag = False
                         self.stopFlag = False
+                    # Too much to the left, need to turn right
                     elif cx > image_center_x + margin:
-                        print("Turning right")
+                        # Set a flag to tell the robot to turn rightwhen in the main loop
                         self.turnRightFlag = True
                         self.turnLeftFlag = False
                         self.stopFlag = False
                     else:
                         self.turnRightFlag = False
                         self.turnLeftFlag = False
-                        print("Centered")
-                    
-                    print(f"area = {cv2.contourArea(c)}")
-                # else:
-                #     self.navigation_mode = True
-                #     self.send_goal(-0.419, -10.1, 2.50)  # Resume navigation
 
             # Show the resultant images created
             cv2.namedWindow('camera_Feed',cv2.WINDOW_NORMAL)
@@ -172,6 +160,7 @@ class Robot(Node):
 
 
     def cancel_done_callback(self, future):
+        # Cancel current goal
         cancel_response = future.result()
         if len(cancel_response.goals_canceling) > 0:
             self.get_logger().info('Successfully canceled goal')
@@ -182,15 +171,17 @@ class Robot(Node):
 
 
     def send_goal(self, x, y, yaw):
+        # Check if goal is currently being tracked
         if self.current_goal_handle is not None:
             self.get_logger().info('A goal is already active')
             return
 
-        if not self.action_client.wait_for_server(timeout_sec=5.0):  # Add timeout
+        # Check if action client (RViz) is working
+        if not self.action_client.wait_for_server(timeout_sec=5.0):
             self.get_logger().error("Action server not available!")
             return
         
-        print("in send_goal function")
+        self.get_logger().info(f"Sending goal: x={x}, y={y}, yaw={yaw}")
         goal_msg = NavigateToPose.Goal()
         goal_msg.pose.header.frame_id = 'map'
         goal_msg.pose.header.stamp = self.get_clock().now().to_msg()
@@ -205,44 +196,33 @@ class Robot(Node):
 
         # self.action_client.wait_for_server()
         self.send_goal_future = self.action_client.send_goal_async(goal_msg, feedback_callback=self.feedback_callback)
-        self.send_goal_future.add_done_callback(
-            lambda future: self.goal_response_callback(future, (x, y, yaw))
-        )
+        self.send_goal_future.add_done_callback(lambda future: self.goal_response_callback(future, (x, y, yaw)))
 
 
     def goal_response_callback(self, future, goal_pose):
-        self.current_goal_handle = future.result()
-        if not self.current_goal_handle.accepted:
+        # Check if goal is accepted
+        current_goal_handle = future.result()
+        if not current_goal_handle.accepted:
             self.get_logger().info('Goal rejected')
+            self.current_goal_handle = None
         else:
             self.get_logger().info('Goal accepted')
+            self.current_goal_handle = current_goal_handle
             self.get_result_future = self.current_goal_handle.get_result_async()
             self.get_result_future.add_done_callback(self.get_result_callback)
 
 
     def get_result_callback(self, future):
+        # Goal is complete
         result = future.result().result
         self.get_logger().info(f'Navigation result: {result}')
-
+        self.current_goal_handle = None  # Allow new goal only after completion
+        self.goals_completed += 1
+        self.get_logger().info(f'Goals completed: {self.goals_completed}')
 
 
     def feedback_callback(self, feedback_msg):
         feedback = feedback_msg.feedback
-        # NOTE: if you want, you can use the feedback while the robot is moving.
-        #       uncomment to suit your need.
-
-        ## Access the current pose
-        #current_pose = feedback_msg.feedback.current_pose
-        #position = current_pose.pose.position
-        #orientation = current_pose.pose.orientation
-
-        ## Access other feedback fields
-        #navigation_time = feedback_msg.feedback.navigation_time
-        #distance_remaining = feedback_msg.feedback.distance_remaining
-
-        ## Print or process the feedback data
-        #self.get_logger().info(f'Current Pose: [x: {position.x}, y: {position.y}, z: {position.z}]')
-        #self.get_logger().info(f'Distance Remaining: {distance_remaining}')
 
 
     def walk_forward(self):
@@ -270,14 +250,12 @@ class Robot(Node):
             self.rate.sleep()
 
 
-
     def turn_right(self):
         desired_velocity = Twist()
         desired_velocity.angular.z = -0.2  # Negative for clockwise rotation
         for _ in range(15):  # Stop for a brief moment
             self.publisher.publish(desired_velocity)
             self.rate.sleep()
-
 
 
     def stop(self):
@@ -301,21 +279,27 @@ def main():
     thread = threading.Thread(target=rclpy.spin, args=(robot,), daemon=True)
     thread.start()
 
+    # list of goals
     goals = [
-        # inside small box
         (5.19, 4.03, 0.00),
-        (-0.419, -10.1, 2.50) # good point
+        (-4.61, 0.153, 0.15),
+        (6.7, -5.22, 0.00),
+        (-0.419, -10.1, 2.50)
     ]
 
     goalIndex = 0
 
     try:
         while rclpy.ok():
-
-            if robot.current_goal_handle is None and goalIndex < len(goals):
-                x, y, yaw = goals[goalIndex]
-                robot.send_goal(x, y, yaw)
-                goalIndex += 1
+            # if robot is tracking a goal
+            if robot.navigation_mode:
+                # if we have finished tracking a goal, track the next goal
+                if robot.current_goal_handle is None and goalIndex < len(goals) and robot.goals_completed == goalIndex:
+                    x, y, yaw = goals[goalIndex]
+                    robot.get_logger().info(f"Sending goal {goalIndex+1}/{len(goals)}: ({x}, {y}, {yaw})")
+                    robot.send_goal(x, y, yaw)
+                    goalIndex += 1
+            # if robot has seen the blue box
             else:
                 # Publish moves
                 if robot.moveForwardsFlag:
@@ -334,7 +318,6 @@ def main():
                     robot.stop()
 
             time.sleep(0.1)
-            # pass
             continue
     except ROSInterruptException:
         pass
