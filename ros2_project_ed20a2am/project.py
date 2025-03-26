@@ -18,10 +18,19 @@ from math import sin, cos
 class Robot(Node):
     def __init__(self):
         super().__init__('robot')
+
+        # Initiate action client
         self.action_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
-        self.current_goal_handle = None  # Track active goal
+        
+        # Track active goal
+        self.current_goal_handle = None
+        
+        # Keep track of completed goals
         self.goals_completed = 0
         
+        # Start in navigation mode
+        self.navigation_mode = True
+
         # Initialise a publisher to publish messages to the robot base
         self.publisher = self.create_publisher(Twist, '/cmd_vel', 10)
         self.rate = self.create_rate(10)  # 10 Hz
@@ -46,8 +55,6 @@ class Robot(Node):
         self.subscription = self.create_subscription(Image, '/camera/image_raw', self.callback, 10)
         self.subscription  # prevent unused variable warning
 
-        self.navigation_mode = True  # Start in navigation mode
-
 
     def callback(self, data):
         try:
@@ -56,7 +63,7 @@ class Robot(Node):
             height, width, _ = image.shape  # Get image dimensions
             image_center_x = width // 2  # Middle of the image
 
-            # Set the upper and lower bounds for blue colour
+            # Set the upper and lower bounds for rgb colours
             
             # blue bounds
             hsv_blue_lower = np.array([120 - self.sensitivity, 100, 100])
@@ -77,18 +84,22 @@ class Robot(Node):
             # Convert the rgb image into a hsv image
             hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
-            # Filter out everything but the blue colour
+            # Create masks for rgb
 
+            # blue mask
             blue_mask = cv2.inRange(hsv_image, hsv_blue_lower, hsv_blue_upper)
 
+            # green mask
             green_mask = cv2.inRange(hsv_image, hsv_green_lower, hsv_green_upper)
 
+            # red mask
             red_mask_1 = cv2.inRange(hsv_image, hsv_red_lower_1, hsv_red_upper_1)
 
             red_mask_2 = cv2.inRange(hsv_image, hsv_red_lower_2, hsv_red_upper_2)
 
             red_mask = cv2.bitwise_or(red_mask_1, red_mask_2)
 
+            # rgb mask
             gb_mask = cv2.bitwise_or(green_mask, blue_mask)
 
             rgb_mask = cv2.bitwise_or(red_mask, gb_mask)
@@ -96,7 +107,7 @@ class Robot(Node):
             # Apply the mask to the original image using the cv2.bitwise_and() method
             filtered_img = cv2.bitwise_and(image, image, mask=rgb_mask)
 
-            # Find the contours that appear within the certain colour mask using the cv2.findContours() method
+            # Find the contours that appear within the blue colour mask using the cv2.findContours() method
             contours, _ = cv2.findContours(blue_mask, mode=cv2.RETR_LIST, method=cv2.CHAIN_APPROX_SIMPLE)
 
             # Reset flags
@@ -107,7 +118,7 @@ class Robot(Node):
             self.turnRightFlag = False
             self.stopFlag = False
 
-            # Loop over the contours
+            # Loop over the contours for the blue mask
             if len(contours) > 0:
 
                 # Use the max() method to find the largest contour                
@@ -127,11 +138,9 @@ class Robot(Node):
                     # Cancel current navigation goal
                     if self.navigation_mode:
                         if self.current_goal_handle and self.current_goal_handle.status == 2:
-                            print(f"Goal handle exists. Status: {self.current_goal_handle.status}")
                             self.get_logger().info('Found blue object')
                             future = self.current_goal_handle.cancel_goal_async()
                             future.add_done_callback(self.cancel_done_callback)
-                            self.get_logger().info('Reset')
                             time.sleep(1)
 
                     # Too close to object, need to move backwards
@@ -158,13 +167,13 @@ class Robot(Node):
                     # Direction check
                     margin = 50  # Tolerance for centering
                     # Too much to the right, need to turn left
-                    if cx < image_center_x - margin:
+                    if cx < image_center_x - margin - 10:
                         # Set a flag to tell the robot to turn left when in the main loop
                         self.turnLeftFlag = True
                         self.turnRightFlag = False
                         self.stopFlag = False
                     # Too much to the left, need to turn right
-                    elif cx > image_center_x + margin:
+                    elif cx > image_center_x + margin + 10:
                         # Set a flag to tell the robot to turn rightwhen in the main loop
                         self.turnRightFlag = True
                         self.turnLeftFlag = False
@@ -173,36 +182,41 @@ class Robot(Node):
                         self.turnRightFlag = False
                         self.turnLeftFlag = False
 
-
-            # Find the contours that appear within the certain colour mask using the cv2.findContours() method
+            # Find the contours that appear within the green colour mask using the cv2.findContours() method
             contours, _ = cv2.findContours(green_mask, mode=cv2.RETR_LIST, method=cv2.CHAIN_APPROX_SIMPLE)
 
+            # Loop over the contours for the green mask
             if len(contours) > 0:
+                # Use the max() method to find the largest contour                
                 c = max(contours, key=cv2.contourArea)
 
+                # Moments can calculate the center of the contour
                 M = cv2.moments(c)
 
+                # Check if the area of the shape you want is big enough to be considered
                 if M['m00'] > 0 and cv2.contourArea(c) > 100:
                     cx, cy = int(M['m10']/M['m00']), int(M['m01']/M['m00'])
 
                     x, y, w, h = cv2.boundingRect(c)  # Get bounding rectangle
                     cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)  # Draw green rectangle with thickness 2
 
-
-            # Find the contours that appear within the certain colour mask using the cv2.findContours() method
+            # Find the contours that appear within the red colour mask using the cv2.findContours() method
             contours, _ = cv2.findContours(red_mask, mode=cv2.RETR_LIST, method=cv2.CHAIN_APPROX_SIMPLE)
 
+            # Loop over the contours for the red mask
             if len(contours) > 0:
+                # Use the max() method to find the largest contour                
                 c = max(contours, key=cv2.contourArea)
 
+                # Moments can calculate the center of the contour
                 M = cv2.moments(c)
 
+                # Check if the area of the shape you want is big enough to be considered
                 if M['m00'] > 0 and cv2.contourArea(c) > 100:
                     cx, cy = int(M['m10']/M['m00']), int(M['m01']/M['m00'])
 
                     x, y, w, h = cv2.boundingRect(c)  # Get bounding rectangle
                     cv2.rectangle(image, (x, y), (x + w, y + h), (0, 0, 255), 2)  # Draw red rectangle with thickness 2
-
 
             # Show the resultant images created
             cv2.namedWindow('camera_Feed',cv2.WINDOW_NORMAL)
@@ -257,7 +271,7 @@ class Robot(Node):
 
 
     def goal_response_callback(self, future, goal_pose):
-        # Check if goal is accepted
+        # Check if goal is accepted or not
         current_goal_handle = future.result()
         if not current_goal_handle.accepted:
             self.get_logger().info('Goal rejected')
@@ -285,7 +299,6 @@ class Robot(Node):
     def walk_forward(self):
         desired_velocity = Twist()
         desired_velocity.linear.x = 0.2  # Forward with 0.2 m/s
-
         for _ in range(15):  # Stop for a brief moment
             self.publisher.publish(desired_velocity)
             self.rate.sleep()
@@ -341,7 +354,7 @@ def main():
     goals = [
         (5.19, 4.03, 0.00),
         (-4.61, 0.153, 3.14),
-        (6.7, -5.22, 4.50),
+        (2.5, -7.96, 4.50),
         (-0.419, -10.1, 2.50)
     ]
 
